@@ -25,3 +25,12 @@ Improvement Ideas
 - Expand UI with pagination controls, loading indicators, and richer filters (category, price range, brand).
 - Containerize the service (Dockerfile + docker-compose) for reproducible deployment.
 - Add CI workflow and broader test coverage (error cases, large dataset performance).
+
+Test Plan
+- Happy paths: generate default data set, list first page, search by brand substring, verify counts and fields.
+- Pagination boundaries: request last page, zero results page, and invalid `page/limit` combinations; expect graceful responses.
+- Input validation: reject negative or excessively large `count`, `page`, `limit`, and empty search terms without crashing.
+- Idempotence & duplicates: repeated `/products/generate` calls should accumulate records without SKU collisions.
+- Performance: measure search latency with 1k+ records; ensure queries remain under target thresholds.
+- Persistence: restart app and confirm previously generated data is still accessible from SQLite file.
+- Error handling: simulate DB connection failure or malformed payloads and confirm API returns JSON error with status >=400.
