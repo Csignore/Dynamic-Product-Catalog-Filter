@@ -1,13 +1,21 @@
 from flask import Flask, request, jsonify, render_template
 from flask_sqlalchemy import SQLAlchemy
 from sqlalchemy import or_
+from typing import Optional
 import os
 import random
+from uuid import uuid4
 
 
-def create_app(testing: bool = False):
+def create_app(testing: bool = False, database_uri: Optional[str] = None):
     app = Flask(__name__)
-    db_path = "sqlite:///:memory:" if testing else f"sqlite:///{os.path.abspath('products.db')}"
+    if database_uri:
+        db_path = database_uri
+    elif testing:
+        db_path = "sqlite:///:memory:"
+    else:
+        db_path = f"sqlite:///{os.path.abspath('products.db')}"
+
     app.config['SQLALCHEMY_DATABASE_URI'] = db_path
     app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 
@@ -41,6 +49,9 @@ def create_app(testing: bool = False):
         db.create_all()
 
     # Utilities
+    MAX_PAGE_SIZE = 200
+    MAX_GENERATE_COUNT = 2000
+
     adjectives = [
         'Compact', 'Wireless', 'Durable', 'Premium', 'Eco', 'Smart', 'Portable', 'Ultra', 'Classic', 'Hybrid'
     ]
@@ -70,11 +81,39 @@ def create_app(testing: bool = False):
     def health():
         return jsonify({'status': 'ok'})
 
+    def _int_or_error(value, field, minimum=1, maximum=None):
+        try:
+            value = int(value)
+        except (TypeError, ValueError):
+            raise ValueError(f"{field} must be an integer")
+        if minimum is not None and value < minimum:
+            raise ValueError(f"{field} must be >= {minimum}")
+        if maximum is not None and value > maximum:
+            raise ValueError(f"{field} must be <= {maximum}")
+        return value
+
+    def _paginate_query(query):
+        try:
+            page = _int_or_error(request.args.get('page', 1), 'page', minimum=1)
+            limit = _int_or_error(request.args.get('limit', 50), 'limit', minimum=1, maximum=MAX_PAGE_SIZE)
+        except ValueError as exc:
+            return None, None, (jsonify({'error': str(exc)}), 400)
+        pagination = query.paginate(page=page, per_page=limit, error_out=False)
+        return pagination, page, limit
+
+    def _json_error(message, status=400):
+        return jsonify({'error': message}), status
+
     @app.route('/products/generate', methods=['POST'])
     def generate_products():
         body = request.get_json(silent=True) or {}
-        count = int(body.get('count', 100))
+        count_raw = body.get('count', 100)
         random.seed(body.get('seed'))
+
+        try:
+            count = _int_or_error(count_raw, 'count', minimum=1, maximum=MAX_GENERATE_COUNT)
+        except ValueError as exc:
+            return _json_error(str(exc))
 
         categories = ['Electronics', 'Home', 'Sports', 'Toys', 'Books']
         brands = ['Acme', 'Globex', 'Umbrella', 'Soylent', 'Initech']
@@ -88,7 +127,7 @@ def create_app(testing: bool = False):
                 brand=random.choice(brands),
                 price=round(random.uniform(5, 999), 2),
                 stock=random.randint(0, 500),
-                sku=f"SKU-{random.randint(100000, 999999)}-{i}"
+                sku=f"SKU-{uuid4().hex[:10].upper()}"
             )
             db.session.add(p)
             created.append(p)
@@ -97,20 +136,21 @@ def create_app(testing: bool = False):
 
     @app.route('/products', methods=['GET'])
     def list_products():
-        page = int(request.args.get('page', 1))
-        limit = int(request.args.get('limit', 50))
-        q = Product.query.order_by(Product.id.asc()).paginate(page=page, per_page=limit, error_out=False)
+        pagination, page, limit_or_error = _paginate_query(Product.query.order_by(Product.id.asc()))
+        if pagination is None:
+            return limit_or_error  # contains error response tuple
+
         return jsonify({
-            'items': [p.to_dict() for p in q.items],
+            'items': [p.to_dict() for p in pagination.items],
             'page': page,
-            'total': q.total
+            'total': pagination.total
         })
 
     @app.route('/products/search', methods=['GET'])
     def search_products():
         term = (request.args.get('q') or '').strip()
         if not term:
-            return jsonify({'items': [], 'total': 0})
+            return _json_error('Query parameter q is required')
         like = f"%{term}%"
         query = Product.query.filter(
             or_(
@@ -121,10 +161,10 @@ def create_app(testing: bool = False):
                 Product.sku.ilike(like)
             )
         ).order_by(Product.id.asc())
-        page = int(request.args.get('page', 1))
-        limit = int(request.args.get('limit', 50))
-        q = query.paginate(page=page, per_page=limit, error_out=False)
-        return jsonify({'items': [p.to_dict() for p in q.items], 'page': page, 'total': q.total})
+        pagination, page, limit_or_error = _paginate_query(query)
+        if pagination is None:
+            return limit_or_error
+        return jsonify({'items': [p.to_dict() for p in pagination.items], 'page': page, 'total': pagination.total})
 
     @app.route('/')
     def index():

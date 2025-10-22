@@ -12,9 +12,9 @@ Getting Started
 - Demo UI: browse to `http://localhost:5050/`
 
 API Endpoints
-- `POST /products/generate` → body `{ "count": 100, "seed": 123 }` seeds demo products (count default 100; optional seed for deterministic data)
-- `GET /products?page=1&limit=50` → paginated list sorted by `id`
-- `GET /products/search?q=term&page=1&limit=50` → case-insensitive substring search across `name`, `description`, `category`, `brand`, and `sku`
+- `POST /products/generate` → body `{ "count": 100, "seed": 123 }` seeds demo products (count default 100; optional seed for deterministic data; count capped at 2,000)
+- `GET /products?page=1&limit=50` → paginated list sorted by `id` (limit range 1–200)
+- `GET /products/search?q=term&page=1&limit=50` → case-insensitive substring search across `name`, `description`, `category`, `brand`, and `sku` (`q` required, same pagination rules)
 
 Testing
 - Activate the venv and run `pytest -q`
