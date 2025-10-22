@@ -23,6 +23,7 @@ Testing
 - Activate the venv and run `pytest -q`
 
 Performance Notes & Ideas
+- The production-ready optimization work (FTS + indexes) is tracked on branch `optimized` to keep `master` lightweight.
 - Current build enables SQLite FTS5 for `name/description/category/brand/sku` and rebuilds the index after mutations; consider switching to Postgres + trigram/GIN indexes for production scale.
 - Introduce rate limiting and input validation (e.g., max page size, allowed characters) to harden the API. *(Input validation for `count`, `page`, and `limit` already implemented.)*
 - Expand UI with pagination controls, loading indicators, and richer filters (category, price range, brand).
