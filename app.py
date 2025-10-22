@@ -1,9 +1,10 @@
 from flask import Flask, request, jsonify, render_template
 from flask_sqlalchemy import SQLAlchemy
-from sqlalchemy import or_
+from sqlalchemy import or_, text
 from typing import Optional
 import os
 import random
+import re
 from uuid import uuid4
 
 
@@ -23,6 +24,13 @@ def create_app(testing: bool = False, database_uri: Optional[str] = None):
 
     class Product(db.Model):
         __tablename__ = 'products'
+        __table_args__ = (
+            db.Index('ix_products_brand', 'brand'),
+            db.Index('ix_products_category', 'category'),
+            db.Index('ix_products_name', 'name'),
+            db.Index('ix_products_sku', 'sku'),
+        )
+
         id = db.Column(db.Integer, primary_key=True)
         name = db.Column(db.String(120), nullable=False)
         description = db.Column(db.String(500), nullable=False)
@@ -44,9 +52,37 @@ def create_app(testing: bool = False, database_uri: Optional[str] = None):
                 'sku': self.sku,
             }
 
+    def ensure_fts():
+        driver = db.engine.url.drivername
+        if not driver.startswith('sqlite'):
+            app.config['HAS_FTS'] = False
+            return
+        try:
+            with db.engine.begin() as conn:
+                conn.exec_driver_sql(
+                    """
+                    CREATE VIRTUAL TABLE IF NOT EXISTS products_fts USING fts5(
+                        name, description, category, brand, sku,
+                        content='products', content_rowid='id'
+                    )
+                    """
+                )
+                conn.exec_driver_sql("INSERT INTO products_fts(products_fts) VALUES('rebuild')")
+            app.config['HAS_FTS'] = True
+        except Exception as exc:  # pragma: no cover - best-effort optimization
+            app.logger.warning('FTS unavailable, falling back to LIKE search: %s', exc)
+            app.config['HAS_FTS'] = False
+
+    def refresh_fts():
+        if not app.config.get('HAS_FTS'):
+            return
+        with db.engine.begin() as conn:
+            conn.exec_driver_sql("INSERT INTO products_fts(products_fts) VALUES('rebuild')")
+
     # Ensure tables exist
     with app.app_context():
         db.create_all()
+        ensure_fts()
 
     # Utilities
     MAX_PAGE_SIZE = 200
@@ -118,9 +154,8 @@ def create_app(testing: bool = False, database_uri: Optional[str] = None):
         categories = ['Electronics', 'Home', 'Sports', 'Toys', 'Books']
         brands = ['Acme', 'Globex', 'Umbrella', 'Soylent', 'Initech']
 
-        created = []
-        for i in range(count):
-            p = Product(
+        products = [
+            Product(
                 name=f"{random.choice(brands)} {random_product_name()}",
                 description=random_sentence(),
                 category=random.choice(categories),
@@ -129,10 +164,12 @@ def create_app(testing: bool = False, database_uri: Optional[str] = None):
                 stock=random.randint(0, 500),
                 sku=f"SKU-{uuid4().hex[:10].upper()}"
             )
-            db.session.add(p)
-            created.append(p)
+            for _ in range(count)
+        ]
+        db.session.bulk_save_objects(products)
         db.session.commit()
-        return jsonify({'created': len(created)})
+        refresh_fts()
+        return jsonify({'created': len(products)})
 
     @app.route('/products', methods=['GET'])
     def list_products():
@@ -152,7 +189,8 @@ def create_app(testing: bool = False, database_uri: Optional[str] = None):
         if not term:
             return _json_error('Query parameter q is required')
         like = f"%{term}%"
-        query = Product.query.filter(
+
+        base_query = Product.query.filter(
             or_(
                 Product.name.ilike(like),
                 Product.description.ilike(like),
@@ -160,7 +198,25 @@ def create_app(testing: bool = False, database_uri: Optional[str] = None):
                 Product.brand.ilike(like),
                 Product.sku.ilike(like)
             )
-        ).order_by(Product.id.asc())
+        )
+
+        def build_match(text_term: str) -> Optional[str]:
+            tokens = [re.sub(r'[^a-z0-9]', '', t.lower()) for t in text_term.split()]
+            tokens = [t for t in tokens if t]
+            if not tokens:
+                return None
+            return ' OR '.join(f'{token}*' for token in tokens)
+
+        match = build_match(term)
+        if app.config.get('HAS_FTS') and match:
+            ids = [row[0] for row in db.session.execute(text(
+                "SELECT rowid FROM products_fts WHERE products_fts MATCH :match"
+            ), {'match': match})]
+            if not ids:
+                return jsonify({'items': [], 'page': 1, 'total': 0})
+            base_query = base_query.filter(Product.id.in_(ids))
+
+        query = base_query.order_by(Product.id.asc())
         pagination, page, limit_or_error = _paginate_query(query)
         if pagination is None:
             return limit_or_error

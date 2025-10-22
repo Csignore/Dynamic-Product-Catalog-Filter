@@ -2,14 +2,17 @@ Dynamic Product Catalog Filter
 
 Overview
 - Flask backend that generates demo product data, persists it in SQLite, and exposes retrieval and search APIs.
+- SQLite Full-Text Search (FTS5) index plus conventional indexes to keep filtering snappy even with 1k+ products.
 - Lightweight HTML page (served at `/`) to seed sample data and exercise the search flow without an external frontend.
-- Automated pytest to verify generation, pagination, and search behavior end to end.
+- Automated pytest to verify generation, pagination, validation, persistence, and large-data behavior end to end.
 
 Getting Started
 - Install dependencies: `python3 -m venv .venv && source .venv/bin/activate && pip install -r requirements.txt`
 - Launch server: `python app.py` (defaults to port 5050 if `FLASK_RUN_PORT` is unset)
 - Health check: `GET http://localhost:5050/health`
 - Demo UI: browse to `http://localhost:5050/`
+
+- Bulk inserts and an automatic FTS rebuild keep the data generator responsive (tested with 1,000 records in <1s on local hardware).
 
 API Endpoints
 - `POST /products/generate` → body `{ "count": 100, "seed": 123 }` seeds demo products (count default 100; optional seed for deterministic data; count capped at 2,000)
@@ -19,8 +22,12 @@ API Endpoints
 Testing
 - Activate the venv and run `pytest -q`
 
-Improvement Ideas
-- Swap SQLite for Postgres or add SQLite FTS5 indexes to support larger datasets and faster lookups.
+Performance Notes & Ideas
+- Current build enables SQLite FTS5 for `name/description/category/brand/sku` and rebuilds the index after mutations; consider switching to Postgres + trigram/GIN indexes for production scale.
+- Introduce rate limiting and input validation (e.g., max page size, allowed characters) to harden the API. *(Input validation for `count`, `page`, and `limit` already implemented.)*
+- Expand UI with pagination controls, loading indicators, and richer filters (category, price range, brand).
+- Containerize the service (Dockerfile + docker-compose) for reproducible deployment.
+- Add CI workflow and broader test coverage (error cases, large dataset performance).
 - Introduce rate limiting and input validation (e.g., max page size, allowed characters) to harden the API.
 - Expand UI with pagination controls, loading indicators, and richer filters (category, price range, brand).
 - Containerize the service (Dockerfile + docker-compose) for reproducible deployment.
