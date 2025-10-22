@@ -20,6 +20,7 @@ Testing
 - Activate the venv and run `pytest -q`
 
 Improvement Ideas
+- Track performance-focused work on a separate branch `optimized` (FTS, indexing, UI tweaks) so `master` stays lightweight.
 - Swap SQLite for Postgres or add SQLite FTS5 indexes to support larger datasets and faster lookups.
 - Introduce rate limiting and input validation (e.g., max page size, allowed characters) to harden the API.
 - Expand UI with pagination controls, loading indicators, and richer filters (category, price range, brand).
